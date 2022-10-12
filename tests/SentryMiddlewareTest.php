@@ -7,12 +7,15 @@ namespace Yiisoft\Yii\Sentry\Tests;
 use Error;
 use HttpSoft\Message\Response;
 use HttpSoft\Message\ServerRequest;
+use PHPUnit\Framework\Error\Error as PHPUnitError;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 use RuntimeException;
+use Sentry\Event;
 use Yiisoft\ErrorHandler\Exception\ErrorException;
 use Yiisoft\Yii\Sentry\SentryMiddleware;
+use Yiisoft\Yii\Sentry\Tests\Stub\ContextException;
 use Yiisoft\Yii\Sentry\Tests\Stub\Transport;
 
 final class SentryMiddlewareTest extends TestCase
@@ -32,7 +35,7 @@ final class SentryMiddlewareTest extends TestCase
                 $this->createRequestHandlerWithException(),
             );
         } catch (RuntimeException $e) {
-            $this->assertTransportHasException('RuntimeException', 'Exception test.', $eventKey);
+            $this->assertTransportHasException(RuntimeException::class, 'Exception test.', $eventKey);
 
             throw $e;
         }
@@ -53,7 +56,7 @@ final class SentryMiddlewareTest extends TestCase
                 $this->createRequestHandlerWithFatalError(),
             );
         } catch (Error $e) {
-            $this->assertTransportHasException('PHPUnit\Framework\Error\Error', 'Fatal error test.', $eventKey);
+            $this->assertTransportHasException(PHPUnitError::class, 'Fatal error test.', $eventKey);
 
             throw $e;
         }
@@ -75,6 +78,38 @@ final class SentryMiddlewareTest extends TestCase
             );
         } catch (ErrorException $e) {
             $this->assertCount(0, Transport::$events[$eventKey]);
+
+            throw $e;
+        }
+    }
+
+    public function testProcessWithContextableException(): void
+    {
+        $methodName = debug_backtrace()[0]['function'];
+        $eventKey = self::class . "::$methodName()";
+
+        $this->expectException(ContextException::class);
+        $this->expectExceptionMessage('Error handler exception test with context.');
+        $hub = $this->createSentryHub($eventKey, [
+            'options' => [
+                'send_default_pii' => true,
+                'traces_sample_rate' => 1.0,
+            ],
+            'tracing' => [
+                'default_integrations' => true,
+            ],
+        ]);
+        $middleware = new SentryMiddleware($hub);
+        try {
+            $middleware->process(
+                new ServerRequest(method: 'GET', uri: '/'),
+                $this->createRequestHandlerWithContextableErrorHandlerException()
+            );
+        } catch (ContextException $e) {
+            $this->assertCount(1, Transport::$events[$eventKey]);
+            /** @var Event $event */
+            $event = Transport::$events[$eventKey][0];
+            $this->assertEquals(['exception_context' => [['key' => 'context value']]], $event->getExtra());
 
             throw $e;
         }
@@ -121,6 +156,17 @@ final class SentryMiddlewareTest extends TestCase
             public function handle(ServerRequestInterface $request): ResponseInterface
             {
                 throw new ErrorException('Error handler exception test.');
+            }
+        };
+    }
+
+    private function createRequestHandlerWithContextableErrorHandlerException(): RequestHandlerInterface
+    {
+        return new class () implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                throw (new ContextException('Error handler exception test with context.'))
+                    ->addContext(['key' => 'context value']);
             }
         };
     }

@@ -12,40 +12,38 @@ use Sentry\Severity;
 use Sentry\State\HubInterface;
 use Sentry\State\Scope;
 use Throwable;
+use Yiisoft\Yii\Sentry\Integration\Integration;
 
 final class SentryLogAdapter
 {
     /**
      * @psalm-suppress PropertyNotSetInConstructor
-     * @var null|string the current application environment (staging|preprod|prod)
      */
-    protected ?string $environment;
+    protected ?string $environment = null;
 
     /**
      * @psalm-suppress PropertyNotSetInConstructor
-     * @var null|string should represent the current version of the calling
-     *             software. Can be any string (git commit, version number)
+     *
+     * @var string|null Represents the current version of the calling software.
+     * Can be any string (git commit, version number).
      */
-    protected ?string $release;
+    protected ?string $release = null;
 
     protected string $minLevel;
 
-    protected array $levels
-        = [
-            LogLevel::EMERGENCY => 0,
-            LogLevel::ALERT     => 1,
-            LogLevel::CRITICAL  => 2,
-            LogLevel::ERROR     => 3,
-            LogLevel::WARNING   => 4,
-            LogLevel::NOTICE    => 5,
-            LogLevel::INFO      => 6,
-            LogLevel::DEBUG     => 7,
-        ];
+    protected array $levels = [
+        LogLevel::EMERGENCY => 0,
+        LogLevel::ALERT => 1,
+        LogLevel::CRITICAL => 2,
+        LogLevel::ERROR => 3,
+        LogLevel::WARNING => 4,
+        LogLevel::NOTICE => 5,
+        LogLevel::INFO => 6,
+        LogLevel::DEBUG => 7,
+    ];
 
-    public function __construct(
-        private HubInterface $hub,
-        YiiSentryConfig $config,
-    ) {
+    public function __construct(private HubInterface $hub, YiiSentryConfig $config)
+    {
         $this->minLevel = $config->getLogLevel() ?? LogLevel::ERROR;
     }
 
@@ -54,10 +52,11 @@ final class SentryLogAdapter
      */
     public function log(string $level, string $message, array $context): void
     {
-        /** @psalm-suppress MixedAssignment */
+        /**
+         * @psalm-suppress MixedAssignment
+         */
         $exception = $context['exception'] ?? $context['throwable'] ?? null;
-        unset($context['exception']);
-        unset($context['throwable']);
+        unset($context['exception'], $context['throwable']);
 
         $this->hub->withScope(
             function (Scope $scope) use (
@@ -67,7 +66,9 @@ final class SentryLogAdapter
                 $context,
             ) {
                 if (!empty($context['extra'])) {
-                    /** @psalm-suppress MixedAssignment */
+                    /**
+                     * @psalm-suppress MixedAssignment
+                     */
                     foreach ($context['extra'] as $key => $tag) {
                         $scope->setExtra((string)$key, $tag);
                     }
@@ -75,7 +76,9 @@ final class SentryLogAdapter
                 }
 
                 if (!empty($context['tags'])) {
-                    /** @psalm-suppress MixedAssignment */
+                    /**
+                     * @psalm-suppress MixedAssignment
+                     */
                     foreach ($context['tags'] as $key => $tag) {
                         $scope->setTag((string)$key, (string)$tag);
                     }
@@ -96,8 +99,7 @@ final class SentryLogAdapter
                     unset($context['user']);
                 }
 
-                $logger = !empty($context['logger']) ? (string)$context['logger']
-                    : 'default logger';
+                $logger = !empty($context['logger']) ? (string)$context['logger'] : 'default logger';
                 unset($context['logger']);
 
                 if (!empty($context)) {
@@ -108,8 +110,7 @@ final class SentryLogAdapter
                     function (Event $event) use ($logger, $level, $context) {
                         $event->setLevel($this->getLogLevel($level));
                         $event->setLogger($logger);
-                        if (
-                            !empty($this->environment)
+                        if (!empty($this->environment)
                             && !$event->getEnvironment()
                         ) {
                             $event->setEnvironment($this->environment);
@@ -119,8 +120,7 @@ final class SentryLogAdapter
                             $event->setRelease($this->release);
                         }
 
-                        if (
-                            isset($context['datetime'])
+                        if (isset($context['datetime'])
                             && $context['datetime'] instanceof DateTimeInterface
                         ) {
                             $event->setTimestamp(
@@ -143,14 +143,14 @@ final class SentryLogAdapter
     }
 
     /**
-     * @param array $fingerprint
-     *
      * @return string[]
      */
     private function formatFingerPrint(array $fingerprint): array
     {
         $result = [];
-        /** @psalm-suppress MixedAssignment */
+        /**
+ * @psalm-suppress MixedAssignment
+*/
         foreach ($fingerprint as $key => $value) {
             $result[$key] = (is_string($value) || is_numeric($value))
                 ? (string)$value
@@ -161,14 +161,14 @@ final class SentryLogAdapter
     }
 
     /**
-     * @param array $user
-     *
      * @return array<string, mixed>
      */
     private function formatUser(array $user): array
     {
         $result = [];
-        /** @psalm-suppress MixedAssignment */
+        /**
+         * @psalm-suppress MixedAssignment
+         */
         foreach ($user as $key => $value) {
             $result[(string)$key] = $value;
         }
@@ -178,10 +178,6 @@ final class SentryLogAdapter
 
     /**
      * Translates Monolog log levels to Sentry Severity.
-     *
-     * @param string $logLevel
-     *
-     * @return Severity
      */
     protected function getLogLevel(string $logLevel): Severity
     {
@@ -196,19 +192,16 @@ final class SentryLogAdapter
 
     private function allowLevel(string $level): bool
     {
-        return ($this->levels[$level] ?? 0)
-            <= ($this->levels[$this->minLevel] ?? 0);
+        return ($this->levels[$level] ?? 0) <= ($this->levels[$this->minLevel] ?? 0);
     }
 
     public function breadcrumb(string $level, string $message, array $context): void
     {
         $category = (string)($context['category'] ?? 'log');
         $time = (float)($context['time'] ?? microtime(true));
-        unset($context['category']);
-        unset($context['time']);
+        unset($context['category'], $context['time']);
 
-        if (
-            array_key_exists('trace', $context)
+        if (array_key_exists('trace', $context)
             && empty($context['trace'])
         ) {
             unset($context['trace']);
@@ -220,7 +213,9 @@ final class SentryLogAdapter
             ) . 'MB';
         }
         $formattedContext = [];
-        /** @psalm-suppress MixedAssignment */
+        /**
+         * @psalm-suppress MixedAssignment
+         */
         foreach ($context as $key => $value) {
             $formattedContext[(string)$key] = $value;
         }
@@ -242,8 +237,6 @@ final class SentryLogAdapter
      * Set the release.
      *
      * @param string $value
-     *
-     * @return self
      */
     public function setRelease($value): self
     {
@@ -254,10 +247,6 @@ final class SentryLogAdapter
 
     /**
      * Set the current application environment.
-     *
-     * @param null|string $value
-     *
-     * @return self
      */
     public function setEnvironment(?string $value): self
     {

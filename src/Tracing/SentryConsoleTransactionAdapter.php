@@ -8,32 +8,23 @@ use Psr\Log\LoggerInterface;
 use Sentry\SentrySdk;
 use Sentry\Tracing\SpanContext;
 use Sentry\Tracing\TransactionContext;
-use Yiisoft\Log\Logger;
 use Yiisoft\Yii\Console\Event\ApplicationShutdown;
 
 final class SentryConsoleTransactionAdapter
 {
-    protected ?Logger $logger = null;
-
-    private SentryTraceConsoleListener $consoleListener;
-
-    public function __construct(LoggerInterface $logger, SentryTraceConsoleListener $consoleListener)
+    public function __construct(private LoggerInterface $logger, private SentryTraceConsoleListener $consoleListener)
     {
-        if ($logger instanceof Logger) {
-            $this->logger = $logger;
-        }
-        $this->consoleListener = $consoleListener;
     }
 
-    public function begin(?string $sentryTraceString = null): self
+    public function begin(?string $sentryTraceString = null, ?string $baggage = null): self
     {
         $hub = SentrySdk::getCurrentHub();
         if ($sentryTraceString) {
-            $context = TransactionContext::fromSentryTrace($sentryTraceString);
+            $context = TransactionContext::fromHeaders($sentryTraceString, $baggage ?? '');
         } else {
             $context = new TransactionContext();
         }
-        $context->setOp('console sub task');
+        $context->setOp('console subtask');
 
         $context->setStartTimestamp(microtime(true));
 
@@ -47,7 +38,6 @@ final class SentryConsoleTransactionAdapter
         $appContextStart->setStartTimestamp(microtime(true));
         $appSpan = $transaction->startChild($appContextStart);
         SentrySdk::getCurrentHub()->setSpan($appSpan);
-        $this->consoleListener->setAppSpan($appSpan);
 
         return $this;
     }
@@ -73,10 +63,10 @@ final class SentryConsoleTransactionAdapter
 
     public function commit(): ?string
     {
-        $this->logger?->info("sentry force commit");
+        $this->logger->info('sentry force commit');
         $sentryTraceString = SentrySdk::getCurrentHub()->getSpan()?->toTraceparent();
-        if (SentrySdk::getCurrentHub()->getTransaction() !== null) {
-            $this->logger?->flush(true);
+        if (method_exists($this->logger, 'flush') && SentrySdk::getCurrentHub()->getTransaction() !== null) {
+            $this->logger->flush(true);
         }
 
         $this->consoleListener->listenCommandTerminate(null);
@@ -84,5 +74,15 @@ final class SentryConsoleTransactionAdapter
         $this->consoleListener->setTransaction(null);
 
         return $sentryTraceString;
+    }
+
+    public function getBaggage(): string
+    {
+        return SentrySdk::getCurrentHub()->getSpan()?->toBaggage() ?? '';
+    }
+
+    public function getTraceString(): string
+    {
+        return SentrySdk::getCurrentHub()->getSpan()?->toTraceparent() ?? '';
     }
 }

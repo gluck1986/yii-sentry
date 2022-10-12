@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Yiisoft\Yii\Sentry;
+namespace Yiisoft\Yii\Sentry\Integration;
 
 use Sentry\Breadcrumb;
 use Sentry\Event;
@@ -17,15 +17,10 @@ use function Sentry\configureScope;
 
 final class Integration implements IntegrationInterface
 {
-    /**
-     * @var null|string
-     */
-    private static $transaction;
+    private static ?string $transaction = null;
 
     /**
-     * Adds a breadcrumb if the integration is enabled for Laravel.
-     *
-     * @param Breadcrumb $breadcrumb
+     * Adds a breadcrumb if the integration is enabled for Yii3.
      */
     public static function addBreadcrumb(Breadcrumb $breadcrumb): void
     {
@@ -39,9 +34,7 @@ final class Integration implements IntegrationInterface
     }
 
     /**
-     * Configures the scope if the integration is enabled for Laravel.
-     *
-     * @param callable $callback
+     * Configures the scope if the integration is enabled for Yii3.
      */
     public static function configureScope(callable $callback): void
     {
@@ -71,14 +64,10 @@ final class Integration implements IntegrationInterface
 
     /**
      * Extract the readable name for a route.
-     *
-     * @param null|CurrentRoute $route
-     *
-     * @return string|null
      */
     public static function extractNameForRoute(?CurrentRoute $route): ?string
     {
-        if (is_null($route)) {
+        if (null === $route) {
             return null;
         }
         $routeName = null;
@@ -96,8 +85,6 @@ final class Integration implements IntegrationInterface
 
     /**
      * Retrieve the meta tags with tracing information to link this request to front-end requests.
-     *
-     * @return string
      */
     public static function sentryTracingMeta(): string
     {
@@ -107,17 +94,11 @@ final class Integration implements IntegrationInterface
             return '';
         }
 
-        $content = sprintf('<meta name="sentry-trace" content="%s"/>', $span->toTraceparent());
-
-        // $content .= sprintf('<meta name="sentry-trace-data" content="%s"/>', $span->getDescription());
-
-        return $content;
+        return sprintf('<meta name="sentry-trace" content="%s"/>', $span->toTraceparent());
     }
 
     /**
      * Get the current active tracing span from the scope.
-     *
-     * @return Span|null
      *
      * @internal This is used internally as an easy way to retrieve the current active tracing span.
      */
@@ -129,20 +110,20 @@ final class Integration implements IntegrationInterface
     public static function logLevelToBreadcrumbLevel(string $level): string
     {
         switch (strtolower($level)) {
-            case 'debug':
-                return Breadcrumb::LEVEL_DEBUG;
-            case 'warning':
-                return Breadcrumb::LEVEL_WARNING;
-            case 'error':
-                return Breadcrumb::LEVEL_ERROR;
-            case 'critical':
-            case 'alert':
-            case 'emergency':
-                return Breadcrumb::LEVEL_FATAL;
-            case 'info':
-            case 'notice':
-            default:
-                return Breadcrumb::LEVEL_INFO;
+        case 'debug':
+            return Breadcrumb::LEVEL_DEBUG;
+        case 'warning':
+            return Breadcrumb::LEVEL_WARNING;
+        case 'error':
+            return Breadcrumb::LEVEL_ERROR;
+        case 'critical':
+        case 'alert':
+        case 'emergency':
+            return Breadcrumb::LEVEL_FATAL;
+        case 'info':
+        case 'notice':
+        default:
+            return Breadcrumb::LEVEL_INFO;
         }
     }
 
@@ -151,32 +132,28 @@ final class Integration implements IntegrationInterface
      */
     public function setupOnce(): void
     {
-        Scope::addGlobalEventProcessor(function (Event $event): Event {
-            $self = SentrySdk::getCurrentHub()->getIntegration(self::class);
+        Scope::addGlobalEventProcessor(
+            function (Event $event): Event {
+                $self = SentrySdk::getCurrentHub()->getIntegration(self::class);
 
-            if (!$self instanceof self) {
+                if (!$self instanceof self) {
+                    return $event;
+                }
+
+                if (empty($event->getTransaction())) {
+                    $event->setTransaction($self->getTransaction());
+                }
+
                 return $event;
             }
-
-            if (empty($event->getTransaction())) {
-                $event->setTransaction($self->getTransaction());
-            }
-
-            return $event;
-        });
+        );
     }
 
-    /**
-     * @return null|string
-     */
     public static function getTransaction(): ?string
     {
         return self::$transaction;
     }
 
-    /**
-     * @param null|string $transaction
-     */
     public static function setTransaction(?string $transaction): void
     {
         self::$transaction = $transaction;

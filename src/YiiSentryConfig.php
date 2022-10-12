@@ -13,21 +13,7 @@ final class YiiSentryConfig
     }
 
     /**
-     * Check if a DSN was set in the config.
-     *
-     * @return bool
-     */
-    public function hasDsnSet(): bool
-    {
-        $config = $this->getUserConfig();
-
-        return !empty($config['options']['dsn']);
-    }
-
-    /**
      * Retrieve the user configuration.
-     *
-     * @return array
      */
     public function getUserConfig(): array
     {
@@ -38,20 +24,27 @@ final class YiiSentryConfig
 
     public function getOptions(): array
     {
-        return empty($this->config['options'])
-            ? []
-            : (is_array($this->config['options'])
+        if (empty($this->config['options'])) {
+            return [];
+        }
+        return is_array($this->config['options'])
                 ? $this->config['options']
-                : throw  new InvalidArgumentException('options must be an array'));
+                : throw  new InvalidArgumentException('options must be an array');
     }
 
     public function getTracing(): array
     {
-        return empty($this->config['tracing'])
-            ? []
-            : (is_array($this->config['tracing'])
+        if (empty($this->config['tracing'])) {
+            return [];
+        }
+        return is_array($this->config['tracing'])
                 ? $this->config['tracing']
-                : throw  new InvalidArgumentException('tracing must be an array'));
+                : throw  new InvalidArgumentException('tracing must be an array');
+    }
+
+    public function getMaxGuzzleBodyTrace(): ?int
+    {
+        return empty($this->getTracing()['guzzle_max_body']) ? null : (int)$this->getTracing()['guzzle_max_body'];
     }
 
     public function getLogLevel(): ?string
@@ -59,30 +52,25 @@ final class YiiSentryConfig
         return isset($this->config['log_level']) ? (string)$this->config['log_level'] : null;
     }
 
-    /**
-     * @return array
-     */
     public function getIntegrations(): array
     {
-        return empty($this->config['integrations'])
-            ? []
-            : (is_array($this->config['integrations'])
+        if (empty($this->config['integrations'])) {
+            return [];
+        }
+        return is_array($this->config['integrations'])
                 ? $this->config['integrations']
-                : throw  new InvalidArgumentException('integrations must be an array'));
+                : throw  new InvalidArgumentException('integrations must be an array');
     }
 
     /**
      * Checks if the config is set in such a way that performance tracing could be enabled.
      *
      * Because of `traces_sampler` being dynamic we can never be 100% confident but that is also not important.
-     *
-     * @return bool
      */
     public function couldHavePerformanceTracingEnabled(): bool
     {
         $config = $this->getUserConfig();
 
-        return !empty($config['options']['traces_sample_rate'])
-            || !empty($config['options']['traces_sampler']);
+        return !empty($config['options']['traces_sample_rate']) || !empty($config['options']['traces_sampler']);
     }
 }

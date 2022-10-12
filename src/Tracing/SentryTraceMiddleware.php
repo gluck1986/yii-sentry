@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Yiisoft\Yii\Sentry\Tracing;
 
-use Yiisoft\Yii\Sentry\Integration;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -16,6 +15,7 @@ use Sentry\Tracing\SpanContext;
 use Sentry\Tracing\Transaction;
 use Sentry\Tracing\TransactionContext;
 use Yiisoft\Router\CurrentRoute;
+use Yiisoft\Yii\Sentry\Integration\Integration;
 
 final class SentryTraceMiddleware implements MiddlewareInterface
 {
@@ -23,54 +23,40 @@ final class SentryTraceMiddleware implements MiddlewareInterface
      * The current active transaction.
      *
      * @psalm-suppress PropertyNotSetInConstructor
-     * @var Transaction|null
      */
-    protected $transaction;
+    protected ?\Sentry\Tracing\Transaction $transaction = null;
     /**
      * The span for the `app.handle` part of the application.
      *
      * @psalm-suppress PropertyNotSetInConstructor
-     * @var Span|null
      */
-    protected $appSpan;
+    protected ?\Sentry\Tracing\Span $appSpan = null;
     /**
      * The timestamp of application bootstrap completion.
-     *
-     * @var float|null
      */
     private ?float $bootedTimestamp;
     /**
      * @psalm-suppress PropertyNotSetInConstructor
      */
-    private ?ServerRequestInterface $request;
+    private ?ServerRequestInterface $request = null;
     /**
      * @psalm-suppress PropertyNotSetInConstructor
      */
-    private ?ResponseInterface $response;
+    private ?ResponseInterface $response = null;
 
     public function __construct(
         private HubInterface $hub,
         private ?CurrentRoute $currentRoute
     ) {
-        $this->request = null;
-        $this->response = null;
         $this->bootedTimestamp = microtime(true);
     }
 
-    /**
-     * @return Transaction|null
-     */
     public function getTransaction(): ?Transaction
     {
         return $this->transaction;
     }
 
-    /**
-     * @param Transaction|null $transaction
-     *
-     * @return SentryTraceMiddleware
-     */
-    public function setTransaction(?Transaction $transaction): SentryTraceMiddleware
+    public function setTransaction(?Transaction $transaction): self
     {
         $this->transaction = $transaction;
 
@@ -92,23 +78,21 @@ final class SentryTraceMiddleware implements MiddlewareInterface
         ServerRequestInterface $request,
         HubInterface $sentry
     ): void {
-        $requestStartTime = !empty($request->getServerParams()['REQUEST_TIME_FLOAT'])
-            ? (float)$request->getServerParams()['REQUEST_TIME_FLOAT']
-            : (defined('APP_START_TIME')
-                ? (float)APP_START_TIME
-                : microtime(true));
+        $requestStartTime = $this->getStartTime($request) ?? microtime(true);
 
         if ($request->hasHeader('sentry-trace')) {
             $headers = $request->getHeader('sentry-trace');
-            $header = reset($headers);
-            $context = TransactionContext::fromSentryTrace($header);
+            $baggageHeaders = $request->hasHeader('baggage') ? $request->getHeader('baggage') : [];
+            $sentryTraceHeader = (string)reset($headers);
+            $baggageHeader = (string)reset($baggageHeaders);
+            $context = TransactionContext::fromHeaders($sentryTraceHeader, $baggageHeader);
         } else {
             $context = new TransactionContext();
         }
 
         $context->setOp('http.server');
         $context->setData([
-            'url'    => '/' . ltrim($request->getUri()->getPath(), '/'),
+            'url' => '/' . ltrim($request->getUri()->getPath(), '/'),
             'method' => strtoupper($request->getMethod()),
         ]);
         $context->setStartTimestamp($requestStartTime);
@@ -138,15 +122,11 @@ final class SentryTraceMiddleware implements MiddlewareInterface
         if ($this->bootedTimestamp === null) {
             return null;
         }
-        if (is_null($this->transaction)) {
+        if (null === $this->transaction) {
             return null;
         }
 
-        $appStartTime = defined('APP_START_TIME')
-            ? (float)APP_START_TIME
-            : (empty($request->getServerParams()['REQUEST_TIME_FLOAT'])
-                ? null
-                : (float)$request->getServerParams()['REQUEST_TIME_FLOAT']);
+        $appStartTime = $this->getStartTime($request);
 
         if ($appStartTime === null) {
             return null;
@@ -170,8 +150,7 @@ final class SentryTraceMiddleware implements MiddlewareInterface
 
     private function addBootDetailTimeSpans(Span $bootstrap): void
     {
-        if (
-            !defined('SENTRY_AUTOLOAD')
+        if (!defined('SENTRY_AUTOLOAD')
             || !SENTRY_AUTOLOAD
             || !is_numeric(SENTRY_AUTOLOAD)
         ) {
@@ -195,11 +174,11 @@ final class SentryTraceMiddleware implements MiddlewareInterface
             // If the transaction is not on the scope during finish, the trace.context is wrong
             SentrySdk::getCurrentHub()->setSpan($this->transaction);
 
-            if (!is_null($this->request)) {
+            if (null !== $this->request) {
                 $this->hydrateRequestData($this->request);
             }
 
-            if (!is_null($this->response)) {
+            if (null !== $this->response) {
                 $this->hydrateResponseData($this->response);
             }
 
@@ -210,7 +189,7 @@ final class SentryTraceMiddleware implements MiddlewareInterface
     private function hydrateRequestData(ServerRequestInterface $request): void
     {
         $route = $this->currentRoute;
-        if (is_null($this->transaction)) {
+        if (null === $this->transaction) {
             return;
         }
 
@@ -220,7 +199,7 @@ final class SentryTraceMiddleware implements MiddlewareInterface
             );
 
             $this->transaction->setData([
-                'name'   => Integration::extractNameForRoute($route),
+                'name' => Integration::extractNameForRoute($route),
                 'method' => $request->getMethod(),
             ]);
         }
@@ -236,15 +215,13 @@ final class SentryTraceMiddleware implements MiddlewareInterface
         if (empty($name)) {
             return;
         }
-        if (is_null($this->transaction)) {
+        if (null === $this->transaction) {
             return;
         }
         // If the transaction already has a name other than the default
         // ignore the new name, this will most occur if the user has set a
         // transaction name themself before the application reaches this point
-        if (
-            $this->transaction->getName()
-            !== TransactionContext::DEFAULT_NAME
+        if ($this->transaction->getName() !== TransactionContext::DEFAULT_NAME
         ) {
             return;
         }
@@ -257,19 +234,20 @@ final class SentryTraceMiddleware implements MiddlewareInterface
         $this->transaction?->setHttpStatus($response->getStatusCode());
     }
 
-    /**
-     * @return Span|null
-     */
-    public function getAppSpan(): ?Span
+    private function getStartTime(ServerRequestInterface $request): ?float
     {
-        return $this->appSpan;
-    }
+        /** @psalm-suppress MixedAssignment */
+        $attStartTime = $request->getAttribute('applicationStartTime');
+        if (is_numeric($attStartTime) && !empty((float)$attStartTime)) {
+            $requestStartTime = (float)$attStartTime;
+        } else {
+            $requestStartTime = !empty($request->getServerParams()['REQUEST_TIME_FLOAT'])
+                ? (float)$request->getServerParams()['REQUEST_TIME_FLOAT']
+                : (defined('APP_START_TIME')
+                    ? (float)APP_START_TIME
+                    : null);
+        }
 
-    /**
-     * @param Span|null $appSpan
-     */
-    public function setAppSpan(?Span $appSpan): void
-    {
-        $this->appSpan = $appSpan;
+        return $requestStartTime;
     }
 }

@@ -13,26 +13,17 @@ use Sentry\State\HubInterface;
 use Sentry\State\Scope;
 
 /**
- * This middleware enriches the Sentry scope with the IP address of the request.
- * We do this ourself instead of letting the PHP SDK handle this because we want
- * the IP from the Psr request because it takes into account trusted proxies.
+ * This middleware extends Sentry scope with IP address of the request. Because PSR request is used, it takes trusted
+ * proxies into account, which does not happen during automatic handling by PHP SDK.
  */
 class SetRequestIpMiddleware implements MiddlewareInterface
 {
-    /**
-     * @var ContainerInterface
-     */
-    private $container;
-
-    public function __construct(ContainerInterface $container)
+    public function __construct(private ContainerInterface $container)
     {
-        $this->container = $container;
     }
 
-    public function process(
-        ServerRequestInterface $request,
-        RequestHandlerInterface $handler
-    ): ResponseInterface {
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
         if ($this->container->has(HubInterface::class)) {
             /** @var HubInterface $sentry */
             $sentry = $this->container->get(HubInterface::class);

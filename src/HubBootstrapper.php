@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Yiisoft\Yii\Sentry;
 
-use Yiisoft\Yii\Sentry\Http\YiiRequestFetcher;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
@@ -15,12 +14,17 @@ use Sentry\Options;
 use Sentry\SentrySdk;
 use Sentry\State\HubInterface;
 use Sentry\Transport\TransportFactoryInterface;
+use Yiisoft\Yii\Sentry\Http\YiiRequestFetcher;
+use Yiisoft\Yii\Sentry\Integration\ExceptionContextIntegration;
+use Yiisoft\Yii\Sentry\Integration\Integration;
 
 use function is_string;
 
 final class HubBootstrapper
 {
-    public const DEFAULT_INTEGRATIONS = [];
+    private const DEFAULT_INTEGRATIONS = [
+        ExceptionContextIntegration::class,
+    ];
 
     public function __construct(
         private Options $options,
@@ -34,7 +38,7 @@ final class HubBootstrapper
 
     public function bootstrap(): void
     {
-        $this->options->setIntegrations(fn(array $integrations) => $this->prepareIntegrations($integrations));
+        $this->options->setIntegrations(fn (array $integrations) => $this->prepareIntegrations($integrations));
 
         $clientBuilder = new ClientBuilder($this->options);
         $clientBuilder
@@ -43,9 +47,8 @@ final class HubBootstrapper
 
         $client = $clientBuilder->getClient();
 
-        $hub = $this->hub;
-        $hub->bindClient($client);
-        SentrySdk::setCurrentHub($hub);
+        $this->hub->bindClient($client);
+        SentrySdk::setCurrentHub($this->hub);
     }
 
     /**
@@ -53,54 +56,28 @@ final class HubBootstrapper
      *
      * @return IntegrationInterface[]
      */
-    public function prepareIntegrations(array $integrations)
+    public function prepareIntegrations(array $integrations): array
     {
         $userIntegrations = $this->resolveIntegrationsFromUserConfig();
-        if ($this->options->hasDefaultIntegrations()) {
-            $integrations = array_filter(
-                $integrations,
-                static function (
-                    SdkIntegration\IntegrationInterface $integration
-                ): bool {
-                    if (
-                        $integration instanceof
-                        SdkIntegration\ErrorListenerIntegration
-                    ) {
-                        return false;
-                    }
-
-                    if (
-                        $integration instanceof
-                        SdkIntegration\ExceptionListenerIntegration
-                    ) {
-                        return false;
-                    }
-
-                    if (
-                        $integration instanceof
-                        SdkIntegration\FatalErrorListenerIntegration
-                    ) {
-                        return false;
-                    }
-
-                    // We also remove the default request integration so it can be readded
-                    // after with a Laravel specific request fetcher. This way we can resolve
-                    // the request from Laravel instead of constructing it from the global state
-                    if (
-                        $integration instanceof
-                        SdkIntegration\RequestIntegration
-                    ) {
-                        return false;
-                    }
-
-                    return true;
-                }
-            );
-
-            $integrations[] = new SdkIntegration\RequestIntegration(
-                new YiiRequestFetcher($this->container)
-            );
+        if (!$this->options->hasDefaultIntegrations()) {
+            return array_merge($integrations, $userIntegrations);
         }
+
+        $integrations = array_filter(
+            $integrations,
+            static fn (SdkIntegration\IntegrationInterface $integration): bool => !(
+                $integration instanceof SdkIntegration\ErrorListenerIntegration ||
+                $integration instanceof SdkIntegration\ExceptionListenerIntegration ||
+                $integration instanceof SdkIntegration\FatalErrorListenerIntegration ||
+                // We also remove the default request integration so it can be readded after with a Yii3
+                // specific request fetcher. This way we can resolve the request from Yii3 instead of
+                // constructing it from the global state.
+                $integration instanceof SdkIntegration\RequestIntegration
+            )
+        );
+        $integrations[] = new SdkIntegration\RequestIntegration(
+            new YiiRequestFetcher($this->container)
+        );
 
         return array_merge($integrations, $userIntegrations);
     }
@@ -115,57 +92,35 @@ final class HubBootstrapper
         // Default Sentry SDK integrations
         $integrations = [
             new Integration(),
-            new Integration\ExceptionContextIntegration(),
         ];
 
         $integrationsToResolve = $this->configuration->getIntegrations();
 
-        $enableDefaultTracingIntegrations = isset(
-            $this->configuration
-                ->getTracing()['default_integrations']
-        )
-            ? (bool)$this->configuration->getTracing()['default_integrations']
-            : true;
+        $enableDefaultTracingIntegrations = array_key_exists('default_integrations', $this->configuration->getTracing())
+            && (bool)$this->configuration->getTracing()['default_integrations'];
 
-        if (
-            $enableDefaultTracingIntegrations
-            && $this->configuration->couldHavePerformanceTracingEnabled()
-        ) {
+        if ($enableDefaultTracingIntegrations && $this->configuration->couldHavePerformanceTracingEnabled()) {
             $integrationsToResolve = array_merge(
                 $integrationsToResolve,
                 self::DEFAULT_INTEGRATIONS
             );
         }
-        /** @psalm-suppress MixedAssignment */
+        /**
+         * @psalm-suppress MixedAssignment
+         */
         foreach ($integrationsToResolve as $userIntegration) {
-            if (
-                $userIntegration instanceof
-                SdkIntegration\IntegrationInterface
+            if ($userIntegration instanceof SdkIntegration\IntegrationInterface
             ) {
                 $integrations[] = $userIntegration;
             } elseif (is_string($userIntegration)) {
                 /** @psalm-suppress MixedAssignment */
                 $resolvedIntegration = $this->container->get($userIntegration);
-
-                if (
-                    !$resolvedIntegration instanceof
-                        SdkIntegration\IntegrationInterface
-                ) {
-                    if (is_array($resolvedIntegration)) {
-                        $value = 'array';
-                    } elseif (is_object($resolvedIntegration)) {
-                        $value = get_class($resolvedIntegration);
-                    } elseif (is_null($resolvedIntegration)) {
-                        $value = 'null';
-                    } else {
-                        $value = (string)$resolvedIntegration;
-                    }
-
+                if (!$resolvedIntegration instanceof SdkIntegration\IntegrationInterface) {
                     throw new RuntimeException(
                         sprintf(
-                            'Sentry integrations must be an instance of `%s` got `%s`.',
+                            'Sentry integration must be an instance of `%s` got `%s`.',
                             SdkIntegration\IntegrationInterface::class,
-                            $value
+                            get_debug_type($resolvedIntegration)
                         )
                     );
                 }
@@ -174,7 +129,7 @@ final class HubBootstrapper
             } else {
                 throw new RuntimeException(
                     sprintf(
-                        'Sentry integrations must either be a valid container reference or an instance of `%s`.',
+                        'Sentry integration must either be a valid container reference or an instance of `%s`.',
                         SdkIntegration\IntegrationInterface::class
                     )
                 );

@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace Yiisoft\Yii\Sentry\Tracing;
 
-use Yiisoft\Yii\Sentry\Integration;
 use Psr\Http\Server\MiddlewareInterface;
 use Sentry\Tracing\SpanContext;
 use Yiisoft\Middleware\Dispatcher\Event\AfterMiddleware;
 use Yiisoft\Middleware\Dispatcher\Event\BeforeMiddleware;
 use Yiisoft\Yii\Http\Event\ApplicationShutdown;
+use Yiisoft\Yii\Sentry\Integration\Integration;
 
-final class EventWebTraceHandler
+final class SentryTraceWebListener
 {
     private ?float $prevTime = null;
 
@@ -28,7 +28,7 @@ final class EventWebTraceHandler
      */
     public function listen(...$params): void
     {
-        /** @var object|false $event */
+        /** @var false|object $event */
         $event = current($params);
 
         if (!is_object($event)) {
@@ -57,9 +57,9 @@ final class EventWebTraceHandler
     private function handleStart(MiddlewareInterface $middleware): void
     {
         $currentTime = microtime(true);
-        $currentClass = get_class($middleware);
+        $currentClass = $middleware::class;
 
-        if (is_null($this->prevTime) || is_null($this->prevClass)) {
+        if (null === $this->prevTime || null === $this->prevClass) {
             $this->prevTime = $currentTime;
             $this->prevClass = $currentClass;
 
@@ -92,8 +92,8 @@ final class EventWebTraceHandler
     private function handleDone(MiddlewareInterface $middleware): void
     {
         $currentTime = microtime(true);
-        $currentClass = get_class($middleware);
-        if (is_null($this->prevTime)) {
+        $currentClass = $middleware::class;
+        if (null === $this->prevTime) {
             return;
         }
 
